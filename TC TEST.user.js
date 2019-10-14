@@ -19,9 +19,142 @@
 window.addEventListener('load', function() {
     'use strict';
 
-    var timer = setInterval(connect, 100);
+    var timer = setInterval(connect, 1);
     var storage = {};
     var storageAccessInterval;
+    var req = 1;
+    var user_change = false;
+
+    // Youtube videos
+    function TC_PlayVideo(videoId, title) {
+        return JSON.stringify({"tc":"yut_play","req":req,"item":{"id":videoId,"duration":0,"offset":0,"title":title}});
+    }
+
+	// Send a message to the chat
+    function TC_Message(message) {
+        if(storage.handle !== undefined) {
+           return JSON.stringify({"handle":storage.handle,"tc":"msg","text":message});
+        }
+        return "{}";
+    }
+
+	// Change the username data (Not packet) ... check Packet Processing
+    function TC_Username(username) {
+        var data = TC_Content().__data.chatroom;
+        if(data.nickname !== username) {
+
+           TC_Chatroom("nickname",username);
+           TC_Chatroom("mute", true);
+           TC_Chatroom("micmuted", true);
+           TC_Chatroom("fullscreen", true);
+
+           return false;
+        }
+        return true;
+    }
+
+	// TC JOIN (Forge a join request... need to find a way to generate tokens first)
+    function TC_Connect() {
+        req = 1;
+        return JSON.stringify({"tc":"join","req":1,"useragent":"tinychat-client-webrtc-undefined_win32-2.0.20-","token":"b3c74589709b64be04641428a4f3fe3142f04258","room":"tech","nick":storage.nickname});
+    }
+
+	// Change the nickname with packets
+    function TC_ChangeNickname(nickname) {
+        return JSON.stringify({"tc":"nick","req":req,"nick":nickname});
+    }
+
+    /* https://gist.github.com/JohnRipper/fee0cbb4afdddaaee08a36d61eb17bff */
+    function TC_SocketLog() {
+        WebSocket.prototype._send = WebSocket.prototype.send;
+        WebSocket.prototype.send = function (data) {
+            this._send(data);
+            console.log(data);
+            // Change username
+            //this.send([JSON.stringify(TC_ChangeNickname())]);
+            //this.send([JSON.stringify(TC_PlayVideo("dQw4w9WgXcQ", "Rick Astley - Never Gonna Give You Up (Video)"))]);
+            this.addEventListener('message', function (message) {
+                var username = "NOTFAT_" + Math.floor((Math.random() * 100) + 1);
+
+
+                console.log('>> ' + message.data);
+                var message_obj = JSON.parse(message.data);
+                console.log(message_obj);
+
+                if(message_obj.tc !== undefined && message_obj.tc === "userlist") {
+                    if(message_obj.users[0].handle !== undefined) {
+                        if(storage.handle !== message_obj.users[0].handle) {
+                            storage.handle = message_obj.users[0].handle;
+                        }
+                    }
+                }
+
+                console.log(user_change);
+
+                if(user_change === true) {
+                   console.log("Updated username");
+                   TC_Username(username);
+                   this.send([TC_ChangeNickname(username)]);
+                   user_change = false;
+                }
+
+                if(user_change === false && message_obj.handle !== undefined) {
+                    console.log("Updated handle to " + message_obj.handle);
+                    storage.handle = message_obj.handle;
+                    //this.send([TC_Message("UPDATED HANDLE TO " + storage.username)]);
+                    req = message_obj.req;
+                }
+
+                if(message_obj.req !== undefined) {
+                    if(req !== message_obj.req) {
+                        console.log("Updated request to: " + message_obj.req);
+                        req = message_obj.req;
+                    }
+                }
+
+
+                if(message_obj.text !== undefined && message_obj.tc === "sysmsg") {
+                    if(message_obj.text.includes("kicked")) {
+                        console.log("Hmm");
+                        TC_Username(username);
+                        user_change = true;
+                        return false;
+                    }
+                }
+
+                if(message_obj.text !== undefined) {
+                    console.log("Text received");
+                    if(message_obj.text.includes("@test")) {
+                        console.log("Test received");
+                        //this.send([TC_Message("WHY??????")]);
+                        //this.send([TC_Message("WHY??????")]);
+                        //this.send([TC_Connect()]);
+                        user_change = true;
+                        this.send([]);
+                    }
+                }
+
+                console.log(user_change);
+
+//                 var message_obj = JSON.parse(message.data);
+//                 if(message_obj.text) {
+//                     console.log(message_obj.text);
+//                     if(req < 3) {
+//                        //this.send(JSON.stringify(TC_PlayVideo("dQw4w9WgXcQ", "Rick Astley - Never Gonna Give You Up (Video)")));
+//                     } else if(req < 5) {
+//                         //this.send(JSON.stringify(TC_ChangeNickname()));
+//                     }
+//                 }
+
+            }, false);
+
+            this.send = function (data) {
+                this._send(data);
+                req = req + 1;
+                console.log("<< " + data);
+            };
+        }
+    }
 
     function TC_Shadowroot() {
         if(window.content.shadowRoot !== undefined && window.content.shadowRoot !== null) {
@@ -70,7 +203,7 @@ window.addEventListener('load', function() {
     }
 
     function TC_Get_Node_Child(node, index) {
-        if(node.children.item(index) !== null) {
+        if(node.children !== undefined && node.children.item(index) !== null) {
             return node.children.item(index);
         }
         return false;
@@ -104,19 +237,7 @@ window.addEventListener('load', function() {
         window.content.__data.chatroom.app.defaultChatroom = data;
     }
 
-    function TC_Username(username) {
-        var data = TC_Content().__data.chatroom;
-        if(data.nickname !== username) {
 
-           TC_Chatroom("nickname",username);
-           TC_Chatroom("mute", true);
-           TC_Chatroom("micmuted", true);
-           TC_Chatroom("fullscreen", true);
-
-           return false;
-        }
-        return true;
-    }
 
     function TC_Style_Id(where, elementId, elementStyle) {
         where.getElementById(elementId).style = elementStyle;
@@ -125,9 +246,47 @@ window.addEventListener('load', function() {
     function TC_Shadow_Style(shadowRoot, shadowStyle) {
         shadowRoot.style = shadowStyle;
     }
-    
-    function TC_Message_Process(data) {
-        
+
+    function RedAlert(message) {
+        document.getElementById("captcha").style = "opacity: 1; visibility: visible; display: block;position:fixed;width:100%;height:100%;texxt-align: center;z-index:100000;background:red;color:#fff;left:0;top:0;right:0;";
+        document.getElementById("captcha-content").style = "background: red; color: #fff; text-align: center;";
+        document.getElementById("captcha-content").getElementsByTagName("h1")[0].innerText = "RED ALERT";
+        document.getElementById("captcha-content").getElementsByTagName("h1")[0].style = "color: #fff !important;";
+        document.getElementById("captcha-content").getElementsByTagName("span")[0].innerText = message;
+        document.getElementById("captcha-content").getElementsByTagName("span")[0].style = "color: #fff !important;font-size: 25px;line-height: 1.4;";
+        document.getElementById("captcha-content-skip-button").innerText = "Thanks and Close";
+    }
+
+    document.getElementById("captcha-content-skip-button").addEventListener("click", function(e) {
+        e.preventDefault();
+        document.getElementById("captcha-content").getElementsByTagName("h1")[0].innerHtml = "";
+        document.getElementById("captcha-content").getElementsByTagName("span")[0].innerHtml = "";
+        document.getElementById("captcha").style = "opacity: 0; visibility: hidden; display: none;";
+    });
+
+    function TC_Message_Process(username, message) {
+        // False if a guest...
+        if(username !== false && message !== false) {
+            username.style = "color: #FFF !important;";
+            message.style = "color: #FFF !important;";
+
+            if(message.__data !== undefined && message.__Data !== null) {
+                console.log(" >> >> New message >> >> " + username.innerText + " - " + message.__data.html);
+
+                if(!message.__data.html.includes("Encoded, sorry: ") && message.__data.html.includes("NOTFAT") || message.__data.html.includes("@NOT")) {
+                    console.log(" >> >> Somebody for you");
+                    RedAlert(username.innerText + " : " + message.__data.html);
+                }
+
+                if(message.__data.html.includes("Encoded, sorry: ")) {
+                    console.log("Encoded message");
+                    message.__data.html = atob(message.__data.html.replace("Encoded, sorry: ", ""));
+                    console.log(message.__data.html);
+                }
+
+            }
+        }
+
     }
 
     function TC_Change() {
@@ -227,17 +386,38 @@ window.addEventListener('load', function() {
         TC_Room_Chatlog_Textarea.style = "background-color: #000 !important; color: #00f5ff !important; border: none !important; border: solid 1px #00f5ff; border-radius: none !important;";
 
         // When typing?
-//         if (TC_Room_Chatlog_Textarea.addEventListener) {
-//             TC_Room_Chatlog_Textarea.addEventListener('input', function() {
-//                 console.log("TC_Room_Chatlog");
-//                 console.log(TC_Room_Chatlog);
-//             }, false);
-//         } else if (TC_Room_Chatlog_Textarea.attachEvent) {
-//             TC_Room_Chatlog_Textarea.attachEvent('onpropertychange', function() {
-//                 console.log("TC_Room_Chatlog");
-//                 console.log(TC_Room_Chatlog);
-//             });
-//         }
+        if (TC_Room_Chatlog_Textarea.addEventListener) {
+            TC_Room_Chatlog_Textarea.addEventListener('input', function() {
+                console.log("TC_Room_Chatlog");
+                console.log(TC_Room_Chatlog);
+                // We want to base64 encode the text value
+                var throttleTimer = setTimeout(function() {
+                    var value = TC_Room_Chatlog_Textarea.value;
+                    if(value.includes("@enc") && value.includes("@endenc")) {
+                        value = value.replace("@enc", "");
+                        value = value.replace("@endenc", "");
+                        value = btoa(value);
+                        TC_Room_Chatlog_Textarea.value = "Encoded, sorry: " + value;
+                    }
+                }, 1000);
+            }, false);
+        } else if (TC_Room_Chatlog_Textarea.attachEvent) {
+            TC_Room_Chatlog_Textarea.attachEvent('onpropertychange', function() {
+                console.log("TC_Room_Chatlog");
+                console.log(TC_Room_Chatlog);
+                // We want to base64 encode the text value
+                var throttleTimer = setTimeout(function() {
+                    var value = TC_Room_Chatlog_Textarea.value;
+                    console.log(value);
+                    if(value.includes("@enc") && value.includes("@endenc")) {
+                        value = value.replace("@enc", "");
+                        value = value.replace("@endenc", "");
+                        value = btoa(value);
+                        TC_Room_Chatlog_Textarea.value = "Encoded, sorry: " + value;
+                    }
+                }, 1000);
+            });
+        }
 
 
         var today = new Date();
@@ -278,6 +458,10 @@ window.addEventListener('load', function() {
               console.log("TC_Message");
               console.log(TC_Message);
 
+              var TC_Message_Content_Username = TC_Get_Node_Child(TC_Message, 1);
+              console.log("TC_Message_Content_Username");
+              console.log(TC_Message_Content_Username);
+
               var TC_Message_Content_Wrapper = TC_Get_Node_Child(TC_Message, 3);
               console.log("TC_Message_Content_Wrapper");
               console.log(TC_Message_Content_Wrapper);
@@ -286,7 +470,7 @@ window.addEventListener('load', function() {
               console.log("TC_Message_Content");
               console.log(TC_Message_Content);
 
-              TC_Message_Process(TC_Message_Content);
+              TC_Message_Process(TC_Message_Content_Username, TC_Message_Content);
 
             }
         }, 1000);
@@ -305,6 +489,7 @@ window.addEventListener('load', function() {
                     clearInterval(timer);
                     //console.log(TC_Shadowroot());
                     TC_Change();
+                    TC_SocketLog();
                 }
             }
         }
